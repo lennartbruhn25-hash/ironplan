@@ -1,0 +1,53 @@
+name: iPhone-App bauen
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: XcodeGen installieren
+        run: brew install xcodegen
+
+      - name: Xcode-Projekt erzeugen
+        run: xcodegen generate
+
+      - name: App bauen (ohne Signatur – AltStore signiert später)
+        run: |
+          xcodebuild -project Ironplan.xcodeproj -scheme Ironplan -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > build.log 2>&1 || {
+              echo "::error::Build fehlgeschlagen – Fehler:"
+              grep -E "error:" build.log | head -50
+              tail -n 40 build.log
+              exit 1
+            }
+          test -d build/Build/Products/Release-iphoneos/Ironplan.app
+
+      - name: IPA packen (mit Apple-Health-Berechtigung)
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/Ironplan.app Payload/
+          codesign --force --sign - --entitlements Config/Ironplan.entitlements Payload/Ironplan.app
+          zip -qry Ironplan.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ironplan-ipa
+          path: Ironplan.ipa
+
+      - name: Als Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Ironplan Build ${{ github.run_number }}
+          files: Ironplan.ipa
